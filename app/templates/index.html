@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mapa Satelital - Dibujo de Cuadrado con Texto</title>
+    <style>
+        /* Estilos para el mapa */
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        #instructions {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(255,255,255,0.8);
+            padding: 10px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+<div id="instructions">
+    <p>Mantén presionada la tecla <strong>Control</strong> y arrastra el mouse para dibujar un cuadrado.</p>
+</div>
+
+<!-- Incluir el script de Google Maps con las bibliotecas de geometr�a -->
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyC0z_D62RYCxNGEXUgwvh_LyErpYAen6ZE&libraries=drawing,geometry&callback=initMap" async defer></script>
+
+<script>
+    var selectedRectangle = null;
+    var isDrawing = false;
+    var isControlPressed = false;
+    var map;
+    var startPoint;
+    var textOverlay = null; // Variable para el overlay de texto
+
+    function initMap() {
+        // Definir la clase TextOverlay dentro de initMap
+        function TextOverlay(position, text, map) {
+            this.position = position;
+            this.text = text;
+            this.div = null;
+            this.setMap(map);
+        }
+
+        // Establecer la herencia correctamente
+        TextOverlay.prototype = Object.create(google.maps.OverlayView.prototype);
+        TextOverlay.prototype.constructor = TextOverlay;
+
+        TextOverlay.prototype.onAdd = function() {
+            var div = document.createElement('div');
+            div.style.position = 'absolute';
+            div.style.color = 'white';
+            div.style.fontSize = '36px';
+            div.style.fontWeight = 'bold';
+            div.style.whiteSpace = 'nowrap';
+            div.innerHTML = this.text;
+            this.div = div;
+
+            var panes = this.getPanes();
+            panes.overlayLayer.appendChild(div);
+        };
+
+        TextOverlay.prototype.draw = function() {
+            var overlayProjection = this.getProjection();
+            var position = overlayProjection.fromLatLngToDivPixel(this.position);
+
+            var div = this.div;
+            div.style.left = (position.x - div.offsetWidth / 2) + 'px';
+            div.style.top = (position.y - div.offsetHeight / 2) + 'px';
+        };
+
+        TextOverlay.prototype.onRemove = function() {
+            if (this.div) {
+                this.div.parentNode.removeChild(this.div);
+                this.div = null;
+            }
+        };
+
+        map = new google.maps.Map(document.getElementById('map'), {
+            center: {lat: -34.89447042899162, lng: -56.152903075820234},
+            zoom: 14,
+            mapTypeId: 'satellite'
+        });
+        map.setOptions({ draggable: true });
+
+        // Escuchar eventos del teclado para monitorear la tecla Control
+        window.addEventListener('keydown', function(event) {
+            if (event.key === 'Control' || event.key === 'Meta') {
+                isControlPressed = true;
+            }
+        });
+
+        window.addEventListener('keyup', function(event) {
+            if (event.key === 'Control' || event.key === 'Meta') {
+                isControlPressed = false;
+
+                // Si est�bamos dibujando, finalizar el dibujo
+                if (isDrawing) {
+                    finalizeDrawing();
+                }
+            }
+        });
+
+        // Listener para mousedown (inicio del dibujo)
+        map.addListener('mousedown', function(event) {
+
+            // Verificar si la tecla Control est� presionada
+            if (isControlPressed) {
+                map.setOptions({ draggable: false });
+                isDrawing = true;
+                startPoint = event.latLng;
+
+                // Eliminar el cuadrado existente si hay uno
+                if (selectedRectangle) {
+                    selectedRectangle.setMap(null);
+                }
+
+                // Eliminar el overlay de texto existente si hay uno
+                if (textOverlay) {
+                    textOverlay.setMap(null);
+                    textOverlay = null;
+                }
+
+                // Crear el cuadrado inicial
+                selectedRectangle = new google.maps.Rectangle({
+                    bounds: new google.maps.LatLngBounds(startPoint, startPoint),
+                    editable: false,
+                    draggable: false,
+                    clickable: false,
+                    fillOpacity: 0, // Establecer fillOpacity a 0
+                    map: map,
+                    strokeColor: '#FFFFFF',
+                    strokeWeight: 2,
+                });
+            }else{
+                map.setOptions({ draggable: true });
+            }
+        });
+
+        // Listener para mousemove (ajuste del cuadrado)
+        map.addListener('mousemove', function(event) {
+            if (isDrawing && isControlPressed) {
+                var endPoint = event.latLng;
+
+                // Ajustar el cuadrado para mantener proporciones
+                var bounds = adjustBoundsToSquare(startPoint, endPoint);
+
+                selectedRectangle.setBounds(bounds);
+            } else if (isDrawing && !isControlPressed) {
+                // Si se solt� la tecla Control, finalizar el dibujo
+                finalizeDrawing();
+            }
+        });
+
+        // Listener para mouseup (final del dibujo)
+        map.addListener('mouseup', function(event) {
+            if (isDrawing) {
+                finalizeDrawing();
+            }
+        });
+
+        function finalizeDrawing() {
+            isDrawing = false;
+
+            if (selectedRectangle) {
+                selectedRectangle.setEditable(true);
+                selectedRectangle.setDraggable(true);
+                selectedRectangle.setOptions({
+                    clickable: true,
+                    fillOpacity: 0.35, // Restaurar fillOpacity a un valor visible
+                });
+            }
+
+            // Restablecer el mapa como arrastrable
+            map.setOptions({ draggable: true });
+
+            // Obtener los l�mites y enviar la imagen a la API
+            var bounds = selectedRectangle.getBounds();
+
+            var NE = bounds.getNorthEast();
+            var SW = bounds.getSouthWest();
+
+            var staticMapUrl = "https://maps.googleapis.com/maps/api/staticmap?";
+            staticMapUrl += "size=244x244";
+            staticMapUrl += "&maptype=satellite";
+            staticMapUrl += "&visible=" + NE.lat() + "," + NE.lng() + "|" + SW.lat() + "," + SW.lng();
+            staticMapUrl += "&key=AIzaSyC0z_D62RYCxNGEXUgwvh_LyErpYAen6ZE";
+
+            console.log(staticMapUrl);
+
+            getImageBlob(staticMapUrl, function(blob) {
+                var file = new File([blob], "mapa.png", { type: "image/png" });
+                sendImageToAPI(file);
+            });
+        }
+
+        function adjustBoundsToSquare(startPoint, endPoint) {
+            // Calcular las distancias norte-sur y este-oeste
+            var northSouthDistance = google.maps.geometry.spherical.computeDistanceBetween(
+                startPoint,
+                new google.maps.LatLng(endPoint.lat(), startPoint.lng())
+            );
+            var eastWestDistance = google.maps.geometry.spherical.computeDistanceBetween(
+                startPoint,
+                new google.maps.LatLng(startPoint.lat(), endPoint.lng())
+            );
+
+            // Determinar la distancia m�xima
+            var maxDistance = Math.max(northSouthDistance, eastWestDistance);
+
+            // Determinar la direcci�n (signo) del movimiento
+            var latDirection = endPoint.lat() >= startPoint.lat() ? 1 : -1;
+            var lngDirection = endPoint.lng() >= startPoint.lng() ? 1 : -1;
+
+            // Ajustar latitud
+            var adjustedLat = google.maps.geometry.spherical.computeOffset(
+                startPoint,
+                maxDistance,
+                latDirection > 0 ? 0 : 180 // Norte o Sur
+            ).lat();
+
+            // Ajustar longitud
+            var adjustedLng = google.maps.geometry.spherical.computeOffset(
+                startPoint,
+                maxDistance,
+                lngDirection > 0 ? 90 : -90 // Este o Oeste
+            ).lng();
+
+            // Crear el nuevo punto ajustado
+            var adjustedLatLng = new google.maps.LatLng(adjustedLat, adjustedLng);
+
+            // Crear los nuevos l�mites del cuadrado
+            var bounds = new google.maps.LatLngBounds();
+            bounds.extend(startPoint);
+            bounds.extend(adjustedLatLng);
+
+            return bounds;
+        }
+
+        function getImageBlob(url, callback) {
+            var xhr = new XMLHttpRequest();
+            xhr.open("GET", url, true);
+            xhr.responseType = "blob";
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    callback(xhr.response);
+                } else {
+                    console.error('Error al obtener la imagen:', xhr.statusText);
+                }
+            };
+            xhr.onerror = function() {
+                console.error('Error de red al obtener la imagen.');
+            };
+            xhr.send();
+        }
+
+        function sendImageToAPI(file) {
+            var formData = new FormData();
+            formData.append('image', file);
+
+            fetch('/predict', {
+                method: 'POST',
+                body: formData
+            })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Exito:', data);
+
+                    // Supongamos que 'data.text' contiene el texto que deseas mostrar
+                    var textToDisplay = data.poblacion || "Texto predeterminado";
+
+                    // Obtener el centro del rect�ngulo
+                    var bounds = selectedRectangle.getBounds();
+                    var center = bounds.getCenter();
+
+                    // Crear el overlay de texto
+                    textOverlay = new TextOverlay(center, textToDisplay, map);
+                })
+                .catch((error) => {
+                    console.log("Error al invocar a la API");
+                    var bounds = selectedRectangle.getBounds();
+                    var center = bounds.getCenter();
+                    textOverlay = new TextOverlay(center, "Error al invocar a la api", map);
+                    console.error('Error:', error);
+                });
+        }
+    }
+</script>
+</body>
+</html>
